@@ -104,6 +104,23 @@
         .house-mark-推荐 { background-color: #4caf50; color: white; }
         .house-mark-不推荐 { background-color: #f44336; color: white; }
         .house-mark-一般 { background-color: #ffc107; }
+        .house-favorite-button {
+            display: inline-block;
+            margin: 0 5px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            vertical-align: middle;
+            font-size: 14px; /* Slightly larger for icon */
+            line-height: 1.5;
+            z-index: 1;
+            border: 1px solid #ccc;
+            background-color: #f0f0f0;
+        }
+        .house-favorite-button.favorited {
+            background-color: #ffeb3b; /* Yellow for favorited */
+            border-color: #fbc02d;
+        }
         .mark-dropdown {
             position: absolute;
             top: 100%;
@@ -131,7 +148,7 @@
         .mark-option:hover {
             background-color: #f5f5f5;
         }
-        .title-wrapper .house-mark {
+        .title-wrapper .house-mark, .title-wrapper .house-favorite-button {
             margin-left: 15px;
         }
     `;
@@ -148,7 +165,25 @@
                 },
                 onload: function(response) {
                     const data = JSON.parse(response.responseText);
-                    resolve(data.status);
+                    resolve(data); // Resolve with the whole object {status, favorite}
+                },
+                onerror: reject
+            });
+        });
+    }
+
+    // 更新房源收藏状态
+    async function updateHouseFavorite(houseId, favorite) {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: `${API_BASE_URL}/house/${houseId}/favorite`,
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                data: JSON.stringify({ favorite }), // favorite should be 0 or 1
+                onload: function(response) {
+                    resolve(JSON.parse(response.responseText));
                 },
                 onerror: reject
             });
@@ -171,6 +206,39 @@
                 onerror: reject
             });
         });
+    }
+
+    // 创建收藏按钮
+    function createFavoriteButton(houseId, initialFavoriteStatus) {
+        const button = document.createElement('span');
+        button.className = 'house-favorite-button';
+        let isFavorited = initialFavoriteStatus === 1;
+
+        function updateButtonAppearance() {
+            button.textContent = isFavorited ? '★ 已收藏' : '☆ 收藏';
+            if (isFavorited) {
+                button.classList.add('favorited');
+            } else {
+                button.classList.remove('favorited');
+            }
+        }
+
+        updateButtonAppearance();
+
+        button.addEventListener('click', async (event) => {
+            event.stopPropagation(); // Prevent interference with other click listeners
+            const newFavoriteState = isFavorited ? 0 : 1;
+            try {
+                await updateHouseFavorite(houseId, newFavoriteState);
+                isFavorited = newFavoriteState === 1;
+                updateButtonAppearance();
+            } catch (error) {
+                console.error('Failed to update favorite status:', error);
+                // Optionally, revert button appearance or show an error message
+            }
+        });
+
+        return button;
     }
 
     // 创建标记下拉菜单
@@ -199,8 +267,8 @@
         if (pageType === 'detail') {
             const houseId = extractHouseId(window.location.href);
             if (houseId) {
-                const status = await getHouseStatus(houseId);
-                addMarkToDetailPage(status);
+                const houseData = await getHouseStatus(houseId); // Now returns {status, favorite}
+                addMarkToDetailPage(houseData.status, houseData.favorite);
             }
             return;
         }
@@ -213,43 +281,48 @@
         }
 
         console.log('开始获取房源状态...'); // 调试日志
-        // 批量获取状态
-        const houseIds = houseInfoList.map(info => info.id);
-        const statusMap = await batchGetHouseStatus(houseIds);
-        console.log('获取到的状态:', statusMap); // 调试日志
 
-        // 为每个房源添加标记
+        const houseIds = houseInfoList.map(info => info.id);
+        const houseDataMap = await batchGetHouseStatus(houseIds); // Expects {houseId: {status, favorite}}
+        console.log('获取到的状态:', houseDataMap); // 调试日志
+
         for (const info of houseInfoList) {
-            const status = statusMap[info.id] || '未标记';
-            
-            // 检查是否已存在标记
-            const existingMark = info.titleElement.parentElement.querySelector('.house-mark');
-            if (existingMark) {
-                existingMark.className = `house-mark house-mark-${status}`;
-                existingMark.childNodes[0].textContent = status;
-                continue;
+            const houseData = houseDataMap[info.id] || { status: '未标记', favorite: 0 };
+
+            let targetContainer = info.element.querySelector('.title'); // Prefer '.title' div within the item
+            if (!targetContainer && info.titleElement) {
+                targetContainer = info.titleElement.parentElement; // Fallback to title link's parent
             }
-            
-            // 创建标记元素
+            if (!targetContainer) {
+                 console.warn('Could not find a suitable container for house ID:', info.id, 'in list view. Element:', info.element);
+                 targetContainer = info.element; // Last resort, append to the item itself
+            }
+
+            // 清理旧标记和按钮
+            targetContainer.querySelectorAll('.house-mark, .house-favorite-button').forEach(el => el.remove());
+
+            // 创建收藏按钮
+            const favoriteButton = createFavoriteButton(info.id, houseData.favorite);
+
+            // 创建标记元素 (status part)
             const markElem = document.createElement('span');
-            markElem.className = `house-mark house-mark-${status}`;
-            const textNode = document.createTextNode(status);
+            markElem.className = `house-mark house-mark-${houseData.status}`;
+            const textNode = document.createTextNode(houseData.status);
             markElem.appendChild(textNode);
 
-            // 创建并添加下拉菜单
             const markDropdown = createMarkDropdown();
             markElem.appendChild(markDropdown);
 
-            // 添加点击事件
             markElem.addEventListener('click', (e) => {
                 e.stopPropagation();
                 e.preventDefault();
-                const allDropdowns = document.querySelectorAll('.mark-dropdown');
-                allDropdowns.forEach(d => d !== markDropdown && d.classList.remove('show'));
+                // Close other open dropdowns
+                document.querySelectorAll('.mark-dropdown.show').forEach(d => {
+                    if (d !== markDropdown) d.classList.remove('show');
+                });
                 markDropdown.classList.toggle('show');
             });
 
-            // 处理选项点击
             markDropdown.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 e.preventDefault();
@@ -262,110 +335,138 @@
                     markDropdown.classList.remove('show');
                 }
             });
-
-            // 将标记添加到房源标题后面
-            info.titleElement.insertAdjacentElement('afterend', markElem);
-            info.titleElement.parentElement.style.position = 'relative';
+            
+            // Append new elements to the identified container
+            targetContainer.appendChild(favoriteButton);
+            targetContainer.appendChild(markElem);
         }
     }
 
-    // 监听页面变化
-    const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-            if (mutation.type === 'childList') {
-                processHouseList();
-                break;
-            }
+    // 为详情页添加标记和收藏按钮
+    function addMarkToDetailPage(status, favorite) { // Added favorite parameter
+        // More robust selectors for detail page title area
+        const titleMainElement = document.querySelector('.sellDetailHeader .title .main, .overviewClear .title .main');
+        let titleContainer = document.querySelector('.sellDetailHeader .title, .overviewClear .title'); // This is usually the div we want to append to
+
+        let targetAppendElement = titleContainer; // Default to the .title div
+
+        if (!targetAppendElement && titleMainElement && titleMainElement.parentElement) {
+            // If .title div wasn't found, but .main was, use .main's parent
+            targetAppendElement = titleMainElement.parentElement;
+        } else if (!targetAppendElement && !titleMainElement) {
+             // Fallback if specific selectors fail, try a more generic one
+            targetAppendElement = document.querySelector('div.title'); // A common generic title div
         }
-    });
 
-    // 开始监听
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    // 为详情页添加标记
-    function addMarkToDetailPage(status) {
-        const titleElem = document.querySelector('.title-wrapper');
-        if (!titleElem) return;
-
-        // 检查是否已存在标记
-        const existingMark = titleElem.querySelector('.house-mark');
-        if (existingMark) {
-            existingMark.className = `house-mark house-mark-${status}`;
-            existingMark.childNodes[0].textContent = status;
+        if (!targetAppendElement) {
+            console.error('LJH: Detail page title container could not be reliably found.');
             return;
         }
 
+        // 清理旧标记和按钮 from the chosen container
+        targetAppendElement.querySelectorAll('.house-mark, .house-favorite-button').forEach(el => el.remove());
+
+        const houseId = extractHouseId(window.location.href);
+        if (!houseId) return;
+
+        // 创建收藏按钮
+        const favoriteButton = createFavoriteButton(houseId, favorite);
+
+        // 创建标记元素 (status part)
         const markElem = document.createElement('span');
         markElem.className = `house-mark house-mark-${status}`;
-        markElem.textContent = status;
+        const textNode = document.createTextNode(status);
+        markElem.appendChild(textNode);
 
-        // 添加下拉菜单
-        const dropdown = createMarkDropdown();
-        markElem.appendChild(dropdown);
+        const markDropdown = createMarkDropdown();
+        markElem.appendChild(markDropdown);
 
-        // 添加点击事件
-        markElem.addEventListener('click', async (e) => {
+        markElem.addEventListener('click', (e) => {
             e.stopPropagation();
-            dropdown.classList.toggle('show');
+            e.preventDefault();
+            document.querySelectorAll('.mark-dropdown.show').forEach(d => {
+                if (d !== markDropdown) d.classList.remove('show');
+            });
+            markDropdown.classList.toggle('show');
         });
 
-        // 处理选项点击
-        dropdown.addEventListener('click', async (e) => {
+        markDropdown.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
             const option = e.target;
             if (option.classList.contains('mark-option')) {
                 const newStatus = option.textContent;
-                const houseId = extractHouseId(window.location.href);
-                if (houseId) {
-                    await updateHouseStatus(houseId, newStatus);
-                    markElem.className = `house-mark house-mark-${newStatus}`;
-                    markElem.childNodes[0].textContent = newStatus;
-                }
-                dropdown.classList.remove('show');
+                await updateHouseStatus(houseId, newStatus);
+                markElem.className = `house-mark house-mark-${newStatus}`;
+                textNode.textContent = newStatus;
+                markDropdown.classList.remove('show');
             }
         });
 
-        titleElem.appendChild(markElem);
+        // 将新按钮和标记元素添加到目标容器的末尾
+        targetAppendElement.appendChild(favoriteButton);
+        targetAppendElement.appendChild(markElem);
     }
 
     // 初始处理
     processHouseList();
 
-    // 监听URL变化（用于SPA页面跳转）
+    // --- Observers and Global Event Listeners ---
+
+    // Debounce helper
+    function debounce(func, delay) {
+        let timeout;
+        return function(...args) {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => func.apply(this, args), delay);
+        };
+    }
+    const debouncedProcessHouseList = debounce(processHouseList, 750);
+
+    // Observer for URL changes (SPA navigation)
     let lastUrl = location.href;
-    let urlCheckTimeout = null;
-    
-    const urlObserver = new MutationObserver(() => {
-        const url = location.href;
-        if (url !== lastUrl) {
-            lastUrl = url;
-            // 使用防抖来避免多次触发
-            if (urlCheckTimeout) {
-                clearTimeout(urlCheckTimeout);
-            }
-            urlCheckTimeout = setTimeout(() => {
-                processHouseList();
-                urlCheckTimeout = null;
-            }, 500);
+    new MutationObserver(() => {
+        if (location.href !== lastUrl) {
+            lastUrl = location.href;
+            console.log('LJH: URL changed, reprocessing.');
+            debouncedProcessHouseList(); // Use debounced version
         }
-    });
+    }).observe(document, { subtree: true, childList: true }); // Observe document for title changes/SPA nav
 
-    // 监听页面变化
-    const contentObserver = new MutationObserver((mutations) => {
+    // Observer for dynamic content changes (e.g., list updates, infinite scroll)
+    new MutationObserver((mutations) => {
         for (const mutation of mutations) {
-            if (mutation.type === 'childList') {
-                processHouseList();
-                break;
+            if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+                // Check if the added nodes are relevant (e.g., new house items)
+                let relevantChange = false;
+                for (const node of mutation.addedNodes) {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        // Check if added node is a list item or contains list items
+                        if ((node.matches && node.matches('.sellListContent > .clear')) || 
+                            (node.querySelector && node.querySelector('.sellListContent > .clear')) ||
+                            (mutation.target && mutation.target.matches && mutation.target.matches('.sellListContent'))) {
+                            relevantChange = true;
+                            break;
+                        }
+                    }
+                }
+                if (relevantChange) {
+                    console.log('LJH: Content changed, reprocessing list.');
+                    debouncedProcessHouseList(); // Use debounced version
+                    return; // Process once per batch of mutations
+                }
             }
+        }
+    }).observe(document.body, { childList: true, subtree: true });
+
+    // Global click listener to close dropdowns
+    document.addEventListener('click', (event) => {
+        // If the click is not on a mark element or inside a dropdown, close all dropdowns
+        if (!event.target.closest('.house-mark')) {
+            document.querySelectorAll('.mark-dropdown.show').forEach(dropdown => {
+                dropdown.classList.remove('show');
+            });
         }
     });
 
-    // 开始监听
-    urlObserver.observe(document, { subtree: true, childList: true });
-    contentObserver.observe(document.body, { childList: true, subtree: true });
-
-    // 点击其他地方关闭下拉菜单
-    document.addEventListener('click', () => {
-        const dropdowns = document.querySelectorAll('.mark-dropdown');
-        dropdowns.forEach(dropdown => dropdown.classList.remove('show'));
-    });
 })();
