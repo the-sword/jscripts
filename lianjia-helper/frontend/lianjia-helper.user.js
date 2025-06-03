@@ -86,10 +86,16 @@
     const style = document.createElement('style');
     style.textContent = `
         .house-mark {
-            margin-left: 10px;
+            display: inline-block;
+            margin: 0 5px;
             padding: 2px 8px;
             border-radius: 4px;
             cursor: pointer;
+            position: relative;
+            vertical-align: middle;
+            font-size: 12px;
+            line-height: 1.5;
+            z-index: 1;
         }
         .house-mark-未标记 { background-color: #e0e0e0; }
         .house-mark-推荐 { background-color: #4caf50; color: white; }
@@ -97,10 +103,15 @@
         .house-mark-一般 { background-color: #ffc107; }
         .mark-dropdown {
             position: absolute;
+            top: 100%;
+            left: 0;
+            z-index: 1000;
+            min-width: 80px;
             background: white;
             border: 1px solid #ccc;
             border-radius: 4px;
             padding: 5px 0;
+            margin-top: 4px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
             display: none;
         }
@@ -110,9 +121,15 @@
         .mark-option {
             padding: 5px 15px;
             cursor: pointer;
+            font-size: 12px;
+            line-height: 1.5;
+            white-space: nowrap;
         }
         .mark-option:hover {
             background-color: #f5f5f5;
+        }
+        .title-wrapper .house-mark {
+            margin-left: 15px;
         }
     `;
     document.head.appendChild(style);
@@ -213,7 +230,8 @@
             // 创建标记元素
             const markElem = document.createElement('span');
             markElem.className = `house-mark house-mark-${status}`;
-            markElem.textContent = status;
+            const textNode = document.createTextNode(status);
+            markElem.appendChild(textNode);
 
             // 创建并添加下拉菜单
             const markDropdown = createMarkDropdown();
@@ -222,6 +240,7 @@
             // 添加点击事件
             markElem.addEventListener('click', (e) => {
                 e.stopPropagation();
+                e.preventDefault();
                 const allDropdowns = document.querySelectorAll('.mark-dropdown');
                 allDropdowns.forEach(d => d !== markDropdown && d.classList.remove('show'));
                 markDropdown.classList.toggle('show');
@@ -229,18 +248,21 @@
 
             // 处理选项点击
             markDropdown.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                e.preventDefault();
                 const option = e.target;
                 if (option.classList.contains('mark-option')) {
                     const newStatus = option.textContent;
                     await updateHouseStatus(info.id, newStatus);
                     markElem.className = `house-mark house-mark-${newStatus}`;
-                    markElem.childNodes[0].textContent = newStatus;
+                    textNode.textContent = newStatus;
                     markDropdown.classList.remove('show');
                 }
             });
 
-            // 将标记添加到房源标题旁
-            info.titleElement.parentElement.appendChild(markElem);
+            // 将标记添加到房源标题后面
+            info.titleElement.insertAdjacentElement('afterend', markElem);
+            info.titleElement.parentElement.style.position = 'relative';
         }
     }
 
