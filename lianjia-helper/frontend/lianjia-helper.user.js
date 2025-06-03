@@ -30,15 +30,38 @@
         return null;
     }
 
-    // 从列表页面提取所有房源ID
-    function extractHouseIdsFromList() {
-        const houseIds = [];
-        const links = document.querySelectorAll('a.VIEWDATA');
-        links.forEach(link => {
-            const id = extractHouseId(link.href);
-            if (id) houseIds.push(id);
+    // 从列表页面提取所有房源ID和元素
+    function extractHouseInfoFromList() {
+        const houseInfo = [];
+        // 获取房源列表容器
+        const listContent = document.querySelector('.sellListContent');
+        if (!listContent) {
+            console.log('未找到房源列表容器'); // 调试日志
+            return houseInfo;
+        }
+
+        // 获取所有房源项
+        const houseItems = listContent.querySelectorAll('.clear.LOGCLICKDATA, .clear.LOGVIEWDATA');
+        console.log('找到房源项数量:', houseItems.length); // 调试日志
+
+        houseItems.forEach(item => {
+            // 获取房源链接
+            const titleElem = item.querySelector('.title a');
+            if (!titleElem) return;
+
+            const id = extractHouseId(titleElem.href);
+            if (id) {
+                console.log('找到房源ID:', id, '标题:', titleElem.textContent); // 调试日志
+                houseInfo.push({
+                    id,
+                    element: item,
+                    titleElement: titleElem
+                });
+            }
         });
-        return houseIds;
+
+        console.log('共找到有效房源数量:', houseInfo.length); // 调试日志
+        return houseInfo;
     }
 
     // 批量获取房源状态
@@ -148,7 +171,9 @@
 
     // 处理房源列表
     async function processHouseList() {
+        console.log('开始处理页面...'); // 调试日志
         const pageType = detectPageType();
+        console.log('页面类型:', pageType); // 调试日志
         if (!pageType) return;
 
         if (pageType === 'detail') {
@@ -161,56 +186,61 @@
         }
 
         // 列表页面处理
-        const houseIds = extractHouseIdsFromList();
-        if (houseIds.length === 0) return;
+        const houseInfoList = extractHouseInfoFromList();
+        if (houseInfoList.length === 0) {
+            console.log('未找到房源信息'); // 调试日志
+            return;
+        }
 
+        console.log('开始获取房源状态...'); // 调试日志
         // 批量获取状态
+        const houseIds = houseInfoList.map(info => info.id);
         const statusMap = await batchGetHouseStatus(houseIds);
+        console.log('获取到的状态:', statusMap); // 调试日志
 
-        const houseItems = document.querySelectorAll('.sellListContent li');
-        for (const item of houseItems) {
-            const link = item.querySelector('a.VIEWDATA');
-            if (!link) continue;
-
-            const houseId = extractHouseId(link.href);
-            if (!houseId) continue;
-
-            const status = statusMap[houseId] || '未标记';
-
+        // 为每个房源添加标记
+        for (const info of houseInfoList) {
+            const status = statusMap[info.id] || '未标记';
+            
+            // 检查是否已存在标记
+            const existingMark = info.titleElement.parentElement.querySelector('.house-mark');
+            if (existingMark) {
+                existingMark.className = `house-mark house-mark-${status}`;
+                existingMark.childNodes[0].textContent = status;
+                continue;
+            }
+            
             // 创建标记元素
             const markElem = document.createElement('span');
             markElem.className = `house-mark house-mark-${status}`;
             markElem.textContent = status;
 
-            // 添加下拉菜单
-            const dropdown = createMarkDropdown();
-            markElem.appendChild(dropdown);
+            // 创建并添加下拉菜单
+            const markDropdown = createMarkDropdown();
+            markElem.appendChild(markDropdown);
 
             // 添加点击事件
-            markElem.addEventListener('click', async (e) => {
+            markElem.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const allDropdowns = document.querySelectorAll('.mark-dropdown');
-                allDropdowns.forEach(d => d !== dropdown && d.classList.remove('show'));
-                dropdown.classList.toggle('show');
+                allDropdowns.forEach(d => d !== markDropdown && d.classList.remove('show'));
+                markDropdown.classList.toggle('show');
             });
 
             // 处理选项点击
-            dropdown.addEventListener('click', async (e) => {
+            markDropdown.addEventListener('click', async (e) => {
                 const option = e.target;
                 if (option.classList.contains('mark-option')) {
                     const newStatus = option.textContent;
-                    await updateHouseStatus(houseId, newStatus);
+                    await updateHouseStatus(info.id, newStatus);
                     markElem.className = `house-mark house-mark-${newStatus}`;
                     markElem.childNodes[0].textContent = newStatus;
-                    dropdown.classList.remove('show');
+                    markDropdown.classList.remove('show');
                 }
             });
 
             // 将标记添加到房源标题旁
-            const titleElem = item.querySelector('.title');
-            if (titleElem) {
-                titleElem.appendChild(markElem);
-            }
+            info.titleElement.parentElement.appendChild(markElem);
         }
     }
 
@@ -219,6 +249,7 @@
         for (const mutation of mutations) {
             if (mutation.type === 'childList') {
                 processHouseList();
+                break;
             }
         }
     });
@@ -277,7 +308,8 @@
     // 监听URL变化（用于SPA页面跳转）
     let lastUrl = location.href;
     let urlCheckTimeout = null;
-    new MutationObserver(() => {
+    
+    const urlObserver = new MutationObserver(() => {
         const url = location.href;
         if (url !== lastUrl) {
             lastUrl = url;
@@ -290,7 +322,21 @@
                 urlCheckTimeout = null;
             }, 500);
         }
-    }).observe(document, { subtree: true, childList: true });
+    });
+
+    // 监听页面变化
+    const contentObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.type === 'childList') {
+                processHouseList();
+                break;
+            }
+        }
+    });
+
+    // 开始监听
+    urlObserver.observe(document, { subtree: true, childList: true });
+    contentObserver.observe(document.body, { childList: true, subtree: true });
 
     // 点击其他地方关闭下拉菜单
     document.addEventListener('click', () => {
