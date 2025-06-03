@@ -4,7 +4,7 @@
 // @version      0.1
 // @description  为链家房源添加标记功能
 // @author       Your name
-// @match        https://sh.lianjia.com/ershoufang/*
+// @match        https://*.lianjia.com/ershoufang/*
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
@@ -22,10 +22,13 @@
     // 检测当前页面类型
     function detectPageType() {
         const path = window.location.pathname;
-        if (path === '/ershoufang/' || path.match(/\/ershoufang\/pg\d+/)) {
-            return 'list';
-        } else if (path.match(/\/ershoufang\/\d+\.html/)) {
+        // 详情页匹配
+        if (path.match(/\/ershoufang\/\d+\.html/)) {
             return 'detail';
+        }
+        // 列表页匹配：包括主列表、分页、区域列表等
+        if (path.includes('/ershoufang/')) {
+            return 'list';
         }
         return null;
     }
