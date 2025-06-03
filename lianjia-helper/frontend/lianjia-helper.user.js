@@ -231,6 +231,14 @@
         const titleElem = document.querySelector('.title-wrapper');
         if (!titleElem) return;
 
+        // 检查是否已存在标记
+        const existingMark = titleElem.querySelector('.house-mark');
+        if (existingMark) {
+            existingMark.className = `house-mark house-mark-${status}`;
+            existingMark.childNodes[0].textContent = status;
+            return;
+        }
+
         const markElem = document.createElement('span');
         markElem.className = `house-mark house-mark-${status}`;
         markElem.textContent = status;
@@ -268,11 +276,19 @@
 
     // 监听URL变化（用于SPA页面跳转）
     let lastUrl = location.href;
+    let urlCheckTimeout = null;
     new MutationObserver(() => {
         const url = location.href;
         if (url !== lastUrl) {
             lastUrl = url;
-            processHouseList();
+            // 使用防抖来避免多次触发
+            if (urlCheckTimeout) {
+                clearTimeout(urlCheckTimeout);
+            }
+            urlCheckTimeout = setTimeout(() => {
+                processHouseList();
+                urlCheckTimeout = null;
+            }, 500);
         }
     }).observe(document, { subtree: true, childList: true });
 
